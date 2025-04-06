@@ -13,6 +13,7 @@ export type DatabaseConfig = {
     user: string;
     password: string;
     database: string;
+    schema?: string;
     ssl?: boolean | {
       rejectUnauthorized: boolean;
       ca?: string;
