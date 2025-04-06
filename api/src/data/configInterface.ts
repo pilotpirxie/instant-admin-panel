@@ -5,7 +5,7 @@ type FormatRegexReplacer = {
   html: HtmlString;
 }
 
-type DatabaseConfig = {
+export type DatabaseConfig = {
   dialect: "postgresql";
   connection: {
     host: string;
@@ -25,7 +25,7 @@ type DatabaseConfig = {
   };
 };
 
-type StorageConfig = {
+export type StorageConfig = {
   name: string;
   driver: "s3";
   maxFileSize: number;
