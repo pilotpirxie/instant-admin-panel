@@ -1,5 +1,5 @@
 import pgPromise from 'pg-promise';
-import { DatabaseConfig } from '../configInterface';
+import { DatabaseConfig } from '../ConfigInterface';
 import { 
   DatabaseAdapter,
   DatabaseValue,
@@ -50,8 +50,8 @@ export class PostgresAdapter implements DatabaseAdapter {
   async healthCheck(): Promise<boolean> {
     if (!this.db) return false;
     try {
-      await this.db.one('SELECT 1');
-      return true;
+      const result = await this.db.one('SELECT 1 as healthcheck');
+      return result.healthcheck === 1;
     } catch {
       return false;
     }

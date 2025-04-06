@@ -1,4 +1,4 @@
-import { DatabaseConfig } from "./configInterface";
+import { DatabaseConfig } from "./ConfigInterface";
 
 export interface Constraint {
   name: string;

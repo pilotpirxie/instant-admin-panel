@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { Config } from "./src/data/configInterface";
+import { Config } from "./src/data/ConfigInterface";
 import { runWithConfigFile } from "./src/run";
 
 const exampleConfig: Config = {

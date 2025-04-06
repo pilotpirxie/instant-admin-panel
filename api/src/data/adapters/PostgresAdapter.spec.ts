@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import { PostgresAdapter } from './PostgresAdapter';
-import { DatabaseConfig } from '../configInterface';
+import { DatabaseConfig } from '../ConfigInterface';
 
 describe('PostgresAdapter', () => {
   let adapter: PostgresAdapter;

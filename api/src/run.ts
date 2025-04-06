@@ -7,7 +7,7 @@ import {generateOpenAPI} from "express-endpoints-collection/dist/generator";
 import * as fs from "node:fs";
 import {getCommonErrorsSchema} from "./utils/errorResponse";
 import { jsonSendStatus } from './middlewares/jsonSendStatus';
-import { Config } from './data/configInterface';
+import { Config } from './data/ConfigInterface';
 
 export function runWithConfigFile(config: Config) {
   console.info(JSON.stringify(config, null, 2));

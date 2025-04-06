@@ -1,7 +1,7 @@
 /* eslint-disable */
 
 import { NextFunction, Request, Response } from 'express';
-import { CacheStore } from '../data/cacheStore';
+import { CacheStore } from '../data/CacheStore';
 
 type JSONCache = {
   type: 'json';
