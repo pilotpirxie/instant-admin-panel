@@ -1,0 +1,38 @@
+import { Config } from "./src/data/configInterface";
+
+export const exampleConfig: Config = {
+  database: {
+    dialect: "postgresql",
+    connection: {
+      host: "localhost",
+      port: 5432,
+      user: "postgres",
+      password: "postgres",
+      database: "postgres",
+    },
+  },
+  accessControl: {
+    roles: [
+      {
+        name: "admin",
+        tables: [{
+          name: /^.*/,
+          permissions: {
+            allowRead: true,
+            allowWrite: true,
+            allowDelete: true,
+          }
+        }]
+      }
+    ],
+    localUsers: [
+      {
+        email: "admin@example.com",
+        name: "Admin",
+        passwordHash: "pbkdf2:sha256:100000$jZQeY9Yq$a256",
+        salt: "pbkdf2:sha256:100000$jZQeY9Yq$a256",
+        role: "admin",
+      }
+    ]
+  },
+};
