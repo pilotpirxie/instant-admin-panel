@@ -1,6 +1,8 @@
+import * as fs from "fs";
 import { Config } from "./src/data/configInterface";
+import { runWithConfigFile } from "./src/run";
 
-export const exampleConfig: Config = {
+const exampleConfig: Config = {
   database: {
     dialect: "postgresql",
     connection: {
@@ -36,3 +38,8 @@ export const exampleConfig: Config = {
     ]
   },
 };
+
+const configContent = JSON.stringify(exampleConfig);
+fs.writeFileSync("config.json", configContent);
+
+runWithConfigFile(exampleConfig);

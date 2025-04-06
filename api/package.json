@@ -1,16 +1,19 @@
 {
   "name": "instant-admin-panel",
   "version": "1.0.0",
-  "main": "dist/app.js",
+  "main": "./bin/src/index.js",
+  "bin": {
+    "instant-admin-panel": "./bin/src/index.js"
+  },
   "repository": "https://github.com/pilotpirxie/instant-admin-panel.git",
   "author": "pilotpirxie <10637666+pilotpirxie@users.noreply.github.com>",
   "license": "AGPL-3.0-only",
+  "types": "./bin/src/run.d.ts",
   "scripts": {
-    "run:js": "node ./dist/app.js",
-    "run:ts": "tsc --noEmit && tsx ./src/app.ts",
-    "build": "tsc && cp -r src/* dist",
-    "openapi": "curl -X GET http://localhost:3000/openapi.json -o openapi.json",
+    "build": "tsc && chmod +x bin/src/index.js",
     "dev": "nodemon",
+    "run:ts": "tsx ./src/index.ts ./config.json",
+    "run:js": "npm run build && npm install -g . && instant-admin-panel ./config.json",
     "lint": "npx eslint",
     "fix": "npx eslint --fix",
     "test": "time tsc --noEmit && node --import tsx --test ./src/**/*.spec.ts"
@@ -19,6 +22,7 @@
     "@aws-sdk/client-s3": "^3.782.0",
     "axios": "^1.8.4",
     "body-parser": "^2.2.0",
+    "commander": "^13.1.0",
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.7",
@@ -55,9 +59,19 @@
     "ignore": [
       "src/public"
     ],
-    "exec": "tsc --noEmit && tsx ./src/app.ts"
+    "exec": "tsc --noEmit && tsx ./minimal.spec.ts"
   },
   "engines": {
     "node": "22.x"
-  }
+  },
+  "files": [
+    "bin/**/*"
+  ],
+  "keywords": [
+    "admin",
+    "admin-panel",
+    "crud",
+    "crud-generator",
+    "rest"
+  ]
 }

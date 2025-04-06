@@ -1,0 +1,10 @@
+.docker
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+bin
+dist
+node_modules
+config.json
