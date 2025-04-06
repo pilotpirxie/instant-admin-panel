@@ -1,0 +1,1 @@
+export const DATABASE_SAFE_INTEGER = 2_147_483_647;

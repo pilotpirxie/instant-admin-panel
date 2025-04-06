@@ -1,0 +1,63 @@
+{
+  "name": "instant-admin-panel",
+  "version": "1.0.0",
+  "main": "dist/app.js",
+  "repository": "https://github.com/pilotpirxie/instant-admin-panel.git",
+  "author": "pilotpirxie <10637666+pilotpirxie@users.noreply.github.com>",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "run:js": "node ./dist/app.js",
+    "run:ts": "tsc --noEmit && tsx ./src/app.ts",
+    "build": "tsc && cp -r src/* dist",
+    "openapi": "curl -X GET http://localhost:3000/openapi.json -o openapi.json",
+    "dev": "nodemon",
+    "lint": "npx eslint",
+    "fix": "npx eslint --fix",
+    "test": "time tsc --noEmit && node --import tsx --test ./src/**/*.spec.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.782.0",
+    "axios": "^1.8.4",
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-endpoints-collection": "^1.0.28",
+    "formidable": "^3.5.2",
+    "jsonwebtoken": "^9.0.2",
+    "ms": "^2.1.3",
+    "node-cache": "^5.1.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@faker-js/faker": "^9.6.0",
+    "@types/cors": "^2.8.17",
+    "@types/eslint": "^9.6.1",
+    "@types/express": "^4.17.21",
+    "@types/express-serve-static-core": "^4.19.5",
+    "@types/formidable": "^3.4.5",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/ms": "^2.1.0",
+    "@types/node": "^22.14.0",
+    "eslint": "^9.24.0",
+    "nodemon": "^3.1.9",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.29.0"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "src"
+    ],
+    "ext": "ts, html",
+    "ignore": [
+      "src/public"
+    ],
+    "exec": "tsc --noEmit && tsx ./src/app.ts"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

@@ -1,0 +1,22 @@
+version: '3.9'
+
+name: instant-admin-panel-api
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: mysecretpassword
+    ports:
+      - "35432:5432"
+    volumes:
+      - ./.docker/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+  s3:
+    image: minio/minio
+    ports:
+      - "29000:9000"
+      - "29001:9001"
+    volumes:
+      - ./.docker/minio:/data
+    command: server /data --console-address ":9001"
