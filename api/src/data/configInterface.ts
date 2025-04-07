@@ -320,6 +320,8 @@ type ActionsConfig = {
   allowExport: boolean;
   allowCreate: boolean;
   allowImport: boolean;
+  allowEdit: boolean;
+  allowView: boolean;
 }
 
 type PaginationConfig = {
@@ -332,7 +334,7 @@ type TableConfig = {
   tableName: string;
   displayName?: string;
   description?: string;
-  primaryKey: string;
+  primaryKey: string[];
   columns?: ColumnConfig[];
   actions?: ActionsConfig;
   pagination?: PaginationConfig;
@@ -404,7 +406,7 @@ type ThemeConfig = {
 export type Config = {
   theme?: ThemeConfig;
   database: DatabaseConfig;
-  storage?: StorageConfig;
+  storage?: StorageConfig[];
   tables?: TableConfig[];
   materializedViews?: MaterializedViewsConfig[];
   accessControl: AccessControlConfig;

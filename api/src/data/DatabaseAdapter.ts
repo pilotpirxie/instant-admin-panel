@@ -3,8 +3,7 @@ import { DatabaseConfig } from "./ConfigInterface";
 export interface Constraint {
   name: string;
   type: ConstraintType;
-  columns: string[];
-  definition?: string;
+  content?: string;
 }
 
 export type ConstraintType = 
@@ -19,6 +18,7 @@ export interface TableSchema {
   name: string;
   columns: ColumnInfo[];
   primaryKey?: string[];
+  uniqueKeys?: UniqueKey[];
   foreignKeys?: ForeignKey[];
   constraints?: Constraint[];
 }
@@ -44,9 +44,12 @@ export interface ColumnInfo {
   dataType: string;
   unifiedType: UnifiedColumnType;
   isNullable: boolean;
-  isPrimaryKey: boolean;
-  isUnique: boolean;
   defaultValue?: DatabaseValue;
+}
+
+export interface UniqueKey {
+  name: string;
+  columns: string[];
 }
 
 export type ForeignKeyAction = 
