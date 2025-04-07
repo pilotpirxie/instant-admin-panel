@@ -133,12 +133,6 @@ type ColumnListingConfig = {
     options?: {
       format?: "text" | "map" | "list";
     }
-  } | {
-    type: "plugin",
-    options?: {
-      name: string;
-      pluginParams?: Record<string, unknown>;
-    }
   }
 }
 
@@ -259,13 +253,6 @@ type ColumnAddOrEditConfig = {
       zoom?: number;
     }
   } | {
-    // for plugin data types
-    type: "plugin";
-    options?: {
-      name: string;
-      pluginParams?: Record<string, unknown>;
-    }
-  } | {
     // for relation data types
     type: "oneToOneRelation";
     options: {
@@ -316,10 +303,8 @@ type ColumnConfig = {
 
 type ActionsConfig = {
   allowDelete: boolean;
-  allowBulkDelete: boolean;
   allowExport: boolean;
   allowCreate: boolean;
-  allowImport: boolean;
   allowEdit: boolean;
   allowView: boolean;
 }
@@ -334,7 +319,6 @@ type TableConfig = {
   tableName: string;
   displayName?: string;
   description?: string;
-  primaryKey: string[];
   columns?: ColumnConfig[];
   actions?: ActionsConfig;
   pagination?: PaginationConfig;
@@ -382,20 +366,8 @@ type AccessControlConfig = {
   localUsers?: UserConfig[];
   remoteUsers?: {
     tableName: string;
-    columns: {
-      name: string;
-      email: string;
-      passwordHash: string;
-      salt: string;
-      totpSecret?: string;
-      role: string;
-    };
+    columns: UserConfig;
   } 
-}
-
-type PluginConfig = {
-  name: string;
-  pluginParams?: Record<string, unknown>;
 }
 
 type ThemeConfig = {
@@ -410,5 +382,4 @@ export type Config = {
   tables?: TableConfig[];
   materializedViews?: MaterializedViewsConfig[];
   accessControl: AccessControlConfig;
-  plugins?: PluginConfig[];
 }
