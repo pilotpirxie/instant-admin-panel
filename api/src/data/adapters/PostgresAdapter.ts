@@ -380,18 +380,155 @@ export class PostgresAdapter implements DatabaseAdapter {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async executeStatement<T>(statement: string, params: DatabaseValue[] | undefined): Promise<T[]> {
-    return Promise.resolve([]);
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async getTableData<T extends Record<string, DatabaseValue>>(tableName: string, options: TableDataOptions): Promise<TableData<T>> {
-    return Promise.resolve(undefined as unknown as TableData<T>);
+    if (!this.db) throw new Error('Database not connected');
+    if (!this.config) throw new Error('Database config not set');
+
+    try {
+      const schema = this.config.connection.schema;
+      const safeSchemaName = this.pgp.as.name(schema);
+      const safeTableName = this.pgp.as.name(tableName);
+      
+      const perPage = options.perPage || 10;
+      const page = options.page || 1;
+      const offset = (page - 1) * perPage;
+      
+      const queryParams: DatabaseValue[] = [];
+      
+      let whereClause = '';
+      if (options.filters && options.filters.length > 0) {
+        const filterClauses: string[] = [];
+        
+        for (const filter of options.filters) {
+          const safeColumnName = this.pgp.as.name(filter.column);
+          
+          switch (filter.operator) {
+          case 'eq':
+            if (filter.value === null) {
+              filterClauses.push(`${safeColumnName} IS NULL`);
+            } else {
+              queryParams.push(filter.value);
+              filterClauses.push(`${safeColumnName} = $${queryParams.length}`);
+            }
+            break;
+          case 'neq':
+            if (filter.value === null) {
+              filterClauses.push(`${safeColumnName} IS NOT NULL`);
+            } else {
+              queryParams.push(filter.value);
+              filterClauses.push(`${safeColumnName} <> $${queryParams.length}`);
+            }
+            break;
+          case 'gt':
+            queryParams.push(filter.value);
+            filterClauses.push(`${safeColumnName} > $${queryParams.length}`);
+            break;
+          case 'gte':
+            queryParams.push(filter.value);
+            filterClauses.push(`${safeColumnName} >= $${queryParams.length}`);
+            break;
+          case 'lt':
+            queryParams.push(filter.value);
+            filterClauses.push(`${safeColumnName} < $${queryParams.length}`);
+            break;
+          case 'lte':
+            queryParams.push(filter.value);
+            filterClauses.push(`${safeColumnName} <= $${queryParams.length}`);
+            break;
+          case 'in':
+            if (Array.isArray(filter.value)) {
+              queryParams.push(filter.value);
+              filterClauses.push(`${safeColumnName} = ANY($${queryParams.length})`);
+            }
+            break;
+          case 'nin':
+            if (Array.isArray(filter.value)) {
+              queryParams.push(filter.value);
+              filterClauses.push(`${safeColumnName} != ALL($${queryParams.length})`);
+            }
+            break;
+          case 'like':
+            queryParams.push(filter.value);
+            filterClauses.push(`${safeColumnName} LIKE $${queryParams.length}`);
+            break;
+          case 'contains':
+            queryParams.push(`%${filter.value}%`);
+            filterClauses.push(`${safeColumnName} LIKE $${queryParams.length}`);
+            break;
+          case 'isNull':
+            filterClauses.push(`${safeColumnName} IS NULL`);
+            break;
+          case 'isNotNull':
+            filterClauses.push(`${safeColumnName} IS NOT NULL`);
+            break;
+          default:
+            throw new Error(`Unsupported filter operator: ${filter.operator}`);
+          }
+        }
+        
+        if (filterClauses.length > 0) {
+          whereClause = `WHERE ${filterClauses.join(' AND ')}`;
+        }
+      }
+      
+      let orderByClause = '';
+      if (options.orderBy && options.orderBy.length > 0) {
+        const orderByTerms = options.orderBy.map(sort => {
+          const safeColumnName = this.pgp.as.name(sort.column);
+          const direction = sort.direction.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+          
+          const nullsPosition = direction === 'DESC' ? 'NULLS LAST' : 'NULLS FIRST';
+          
+          return `${safeColumnName} ${direction} ${nullsPosition}`;
+        });
+        
+        orderByClause = `ORDER BY ${orderByTerms.join(', ')}`;
+      }
+      
+      const dataQuery = `
+        SELECT * FROM ${safeSchemaName}.${safeTableName}
+        ${whereClause}
+        ${orderByClause}
+        LIMIT ${perPage} OFFSET ${offset}
+      `;
+      
+      const countQuery = `
+        SELECT COUNT(*) as total 
+        FROM ${safeSchemaName}.${safeTableName}
+        ${whereClause}
+      `;
+      
+      const [data, countResult] = await Promise.all([
+        this.db.any(dataQuery, queryParams),
+        this.db.one(countQuery, queryParams)
+      ]);
+      
+      const total = parseInt(countResult.total, 10);
+      const totalPages = Math.ceil(total / perPage) || 0;
+      
+      return {
+        data: data as T[],
+        total,
+        page,
+        perPage,
+        totalPages
+      };
+    } catch (error) {
+      let errorMessage = 'Failed to fetch table data';
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      throw new Error(errorMessage);
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async updateRecord<T>(tableName: string, where: Record<string, DatabaseValue>, record: Partial<T>): Promise<T> {
     return Promise.resolve(undefined as unknown as T);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async executeStatement<T>(statement: string, params: DatabaseValue[] | undefined): Promise<T[]> {
+    return Promise.resolve([]);
   }
 }

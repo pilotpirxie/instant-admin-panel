@@ -606,6 +606,83 @@ describe('PostgresAdapter', () => {
       assert.strictEqual(typedResult.tags, null, 'tags should be null');
       assert.strictEqual(typedResult.profile_picture, null, 'profile_picture should be null');
     });
+
+    it('should prevent SQL injection in createRecord through field names', async () => {
+      try {
+        await adapter.createRecord('test_schema_table', {
+          'name": (SELECT 1); --': 'SQL Injection Test'
+        });
+        assert.fail('Should have thrown an error for invalid column name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        assert.ok(
+          error.message.includes('Failed to create record'),
+          'Error message should indicate creation failure'
+        );
+      }
+    });
+
+    it('should prevent SQL injection in createRecord through values', async () => {
+      const maliciousValue = "malicious.user+DELETE-FROM-test_schema_table@example.com";
+      
+      const result = await adapter.createRecord('test_schema_table', {
+        name: 'Safe Record',
+        email: maliciousValue
+      });
+      
+      assert.ok(result);
+      assert.strictEqual(result.email, maliciousValue, 'Malicious string should be stored as-is without executing');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const count = await db.one('SELECT COUNT(*) FROM test_schema_table');
+      assert.ok(Number(count.count) > 0, 'Table should still contain records');
+    });
+
+    it('should prevent SQL injection in createRecord with JSON data containing malicious content', async () => {
+      const maliciousJson = { 
+        attack: "'); DROP TABLE test_schema_table; --",
+        nested: { 
+          malicious: "SELECT pg_sleep(1)--" 
+        }
+      };
+      
+      const result = await adapter.createRecord('test_schema_table', {
+        name: 'JSON Injection Test',
+        email: 'json.injection@test.com',
+        data: maliciousJson
+      });
+      
+      assert.ok(result);
+      assert.deepStrictEqual(result.data, maliciousJson, 'Malicious JSON should be stored as-is without executing');
+    });
+
+    it('should prevent SQL injection through table name in createRecord', async () => {
+      try {
+        await adapter.createRecord('test_schema_table; DROP TABLE test_schema_table; --', {
+          name: 'Table Name Injection'
+        });
+        assert.fail('Should have thrown an error for invalid table name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+      }
+      
+      const tables = await adapter.getTableList();
+      assert.ok(tables.includes('test_schema_table'), 'Table should still exist after attempted injection');
+    });
+
+    it('should prevent UNION-based SQL injection attacks', async () => {
+      const unionAttack = "union.attack+SELECT-username-password-FROM-users@example.com";
+      
+      const result = await adapter.createRecord('test_schema_table', {
+        name: 'UNION Attack Test',
+        email: unionAttack
+      });
+      
+      assert.ok(result);
+      assert.strictEqual(result.email, unionAttack, 'UNION attack string should be stored as-is without executing');
+    });
   });
 
   describe('deleteRecord', () => {
@@ -814,63 +891,6 @@ describe('PostgresAdapter', () => {
       const childAfter = await db.oneOrNone(checkChildQuery, [createdParent.id]);
       assert.strictEqual(childAfter, null, 'Child record should be deleted due to CASCADE constraint');
     });
-  });
-
-  describe('SQL Injection Prevention', () => {
-    before(async () => {
-      await adapter.connect(testConfig);
-    });
-
-    it('should prevent SQL injection in createRecord through field names', async () => {
-      try {
-        await adapter.createRecord('test_schema_table', {
-          'name": (SELECT 1); --': 'SQL Injection Test'
-        });
-        assert.fail('Should have thrown an error for invalid column name');
-      } catch (error) {
-        assert.ok(error instanceof Error);
-        assert.ok(
-          error.message.includes('Failed to create record'),
-          'Error message should indicate creation failure'
-        );
-      }
-    });
-
-    it('should prevent SQL injection in createRecord through values', async () => {
-      const maliciousValue = "malicious.user+DELETE-FROM-test_schema_table@example.com";
-      
-      const result = await adapter.createRecord('test_schema_table', {
-        name: 'Safe Record',
-        email: maliciousValue
-      });
-      
-      assert.ok(result);
-      assert.strictEqual(result.email, maliciousValue, 'Malicious string should be stored as-is without executing');
-      
-      const db = adapter['db'];
-      if (!db) throw new Error('Database not connected');
-      
-      const count = await db.one('SELECT COUNT(*) FROM test_schema_table');
-      assert.ok(Number(count.count) > 0, 'Table should still contain records');
-    });
-
-    it('should prevent SQL injection in createRecord with JSON data containing malicious content', async () => {
-      const maliciousJson = { 
-        attack: "'); DROP TABLE test_schema_table; --",
-        nested: { 
-          malicious: "SELECT pg_sleep(1)--" 
-        }
-      };
-      
-      const result = await adapter.createRecord('test_schema_table', {
-        name: 'JSON Injection Test',
-        email: 'json.injection@test.com',
-        data: maliciousJson
-      });
-      
-      assert.ok(result);
-      assert.deepStrictEqual(result.data, maliciousJson, 'Malicious JSON should be stored as-is without executing');
-    });
 
     it('should prevent SQL injection in deleteRecord through field names', async () => {
       try {
@@ -914,20 +934,6 @@ describe('PostgresAdapter', () => {
       assert.ok(checkRecord, 'Safe record should still exist after attempted injection');
     });
 
-    it('should prevent SQL injection through table name in createRecord', async () => {
-      try {
-        await adapter.createRecord('test_schema_table; DROP TABLE test_schema_table; --', {
-          name: 'Table Name Injection'
-        });
-        assert.fail('Should have thrown an error for invalid table name');
-      } catch (error) {
-        assert.ok(error instanceof Error);
-      }
-      
-      const tables = await adapter.getTableList();
-      assert.ok(tables.includes('test_schema_table'), 'Table should still exist after attempted injection');
-    });
-
     it('should prevent SQL injection through table name in deleteRecord', async () => {
       try {
         await adapter.deleteRecord('test_schema_table; DROP TABLE test_schema_table; --', {
@@ -941,17 +947,702 @@ describe('PostgresAdapter', () => {
       const tables = await adapter.getTableList();
       assert.ok(tables.includes('test_schema_table'), 'Table should still exist after attempted injection');
     });
+  });
 
-    it('should prevent UNION-based SQL injection attacks', async () => {
-      const unionAttack = "union.attack+SELECT-username-password-FROM-users@example.com";
+  describe('getTableData', () => {
+    before(async () => {
+      await adapter.connect(testConfig);
       
-      const result = await adapter.createRecord('test_schema_table', {
-        name: 'UNION Attack Test',
-        email: unionAttack
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      await db.none(`DELETE FROM test_schema_table`);
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'John Doe',
+        email: 'john.doe@example.com',
+        age: 25,
+        salary: 50000,
+        is_active: true,
+        data: { role: 'admin' },
+        tags: ['developer', 'frontend']
       });
       
-      assert.ok(result);
-      assert.strictEqual(result.email, unionAttack, 'UNION attack string should be stored as-is without executing');
+      await adapter.createRecord('test_schema_table', {
+        name: 'Jane Smith',
+        email: 'jane.smith@example.com',
+        age: 30,
+        salary: 60000,
+        is_active: true,
+        data: { role: 'user' },
+        tags: ['designer', 'ux']
+      });
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'Bob Johnson',
+        email: 'bob.johnson@example.com',
+        age: 35,
+        salary: 70000,
+        is_active: false,
+        data: { role: 'manager' },
+        tags: ['backend', 'devops']
+      });
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'Alice Brown',
+        email: 'alice.brown@example.com',
+        age: 28,
+        salary: 55000,
+        is_active: true,
+        data: { role: 'user' },
+        tags: ['designer', 'frontend']
+      });
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'Charlie Wilson',
+        email: 'charlie.wilson@example.com',
+        age: 42,
+        salary: 80000,
+        is_active: true,
+        data: { role: 'admin' },
+        tags: ['backend', 'security']
+      });
+    });
+
+    it('should throw an error when not connected', async () => {
+      await adapter.disconnect();
+      try {
+        await adapter.getTableData('test_schema_table', {});
+        assert.fail('Should have thrown an error');
+      } catch (error) {
+        assert.ok(error instanceof Error, 'Should throw an Error');
+        assert.strictEqual(error.message, 'Database not connected', 'Error message should match');
+      }
+      await adapter.connect(testConfig);
+    });
+
+    it('should return data with default pagination', async () => {
+      const result = await adapter.getTableData('test_schema_table', {});
+      
+      assert.ok(result, 'Should return a result');
+      assert.strictEqual(typeof result.total, 'number', 'Should include total count');
+      assert.strictEqual(typeof result.page, 'number', 'Should include current page');
+      assert.strictEqual(typeof result.perPage, 'number', 'Should include perPage value');
+      assert.strictEqual(typeof result.totalPages, 'number', 'Should include totalPages value');
+      assert.ok(Array.isArray(result.data), 'Data should be an array');
+      assert.strictEqual(result.data.length, Math.min(10, result.total), 'Should return at most 10 records by default');
+      
+      const firstRecord = result.data[0];
+      assert.ok(firstRecord.id, 'Records should have an ID');
+      assert.ok(firstRecord.name, 'Records should have a name');
+      assert.ok(firstRecord.email, 'Records should have an email');
+    });
+    
+    it('should respect custom pagination settings', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        page: 2,
+        perPage: 2
+      });
+      
+      assert.strictEqual(result.page, 2, 'Page should be 2');
+      assert.strictEqual(result.perPage, 2, 'PerPage should be 2');
+      assert.strictEqual(result.data.length, 2, 'Should return 2 records');
+      assert.ok(result.total >= 4, 'Total count should be at least 4');
+      assert.strictEqual(result.totalPages, Math.ceil(result.total / 2), 'Total pages calculation should be correct');
+    });
+    
+    it('should handle sorting with single column', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        orderBy: [{ column: 'age', direction: 'asc' }]
+      });
+      
+      const ages = result.data.map(r => r.age);
+      const sortedAges = [...ages].sort((a, b) => Number(a) - Number(b));
+      
+      assert.deepStrictEqual(ages, sortedAges, 'Results should be sorted by age in ascending order');
+    });
+    
+    it('should handle sorting with multiple columns', async () => {
+      await adapter.createRecord('test_schema_table', {
+        name: 'Duplicate Age User',
+        email: 'duplicate.age@example.com',
+        age: 35,
+        salary: 65000,
+        is_active: true
+      });
+      
+      const result = await adapter.getTableData('test_schema_table', {
+        orderBy: [
+          { column: 'age', direction: 'desc' },
+          { column: 'name', direction: 'asc' }
+        ]
+      });
+      
+      const age35Records = result.data.filter(r => r.age === 35);
+      if (age35Records.length >= 2) {
+        const names = age35Records.map(r => r.name);
+        const sortedNames = [...names].sort();
+        assert.deepStrictEqual(names, sortedNames, 'Records with the same age should be sorted by name');
+      }
+      
+      const ages = result.data.map(r => r.age);
+      for (let i = 0; i < ages.length - 1; i++) {
+        assert.ok(Number(ages[i]) >= Number(ages[i+1]), 'Ages should be in descending order');
+      }
+    });
+    
+    it('should filter with equals operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'eq', value: 30 }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.strictEqual(Number(record.age), 30, 'All records should have age 30');
+      });
+    });
+    
+    it('should filter with not equals operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'neq', value: 30 }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.notStrictEqual(Number(record.age), 30, 'No records should have age 30');
+      });
+    });
+    
+    it('should filter with greater than operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'gt', value: 30 }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.ok(Number(record.age) > 30, 'All records should have age greater than 30');
+      });
+    });
+    
+    it('should filter with greater than or equal operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'gte', value: 30 }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.ok(Number(record.age) >= 30, 'All records should have age greater than or equal to 30');
+      });
+    });
+    
+    it('should filter with less than operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'lt', value: 30 }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.ok(Number(record.age) < 30, 'All records should have age less than 30');
+      });
+    });
+    
+    it('should filter with less than or equal operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'lte', value: 30 }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.ok(Number(record.age) <= 30, 'All records should have age less than or equal to 30');
+      });
+    });
+    
+    it('should filter with in operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'in', value: [25, 35, 42] }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.ok([25, 35, 42].includes(Number(record.age)), 'All records should have age in the specified list');
+      });
+    });
+    
+    it('should filter with not in operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'nin', value: [25, 35, 42] }]
+      });
+      
+      result.data.forEach(record => {
+        assert.ok(![25, 35, 42].includes(Number(record.age)), 'No records should have age in the specified list');
+      });
+    });
+    
+    it('should filter with like operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'email', operator: 'like', value: '%.smith@%' }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.ok(String(record.email).includes('.smith@'), 'All emails should contain .smith@');
+      });
+    });
+    
+    it('should filter with contains operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'name', operator: 'contains', value: 'John' }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.ok(String(record.name).includes('John'), 'All names should contain John');
+      });
+    });
+    
+    it('should filter with isNull operator', async () => {
+      await adapter.createRecord('test_schema_table', {
+        name: 'Null Test User',
+        email: 'null.test@example.com',
+        age: null
+      });
+      
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'isNull' }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.strictEqual(record.age, null, 'All records should have null age');
+      });
+    });
+    
+    it('should filter with isNotNull operator', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'isNotNull' }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.notStrictEqual(record.age, null, 'No records should have null age');
+      });
+    });
+    
+    it('should filter with multiple conditions', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [
+          { column: 'is_active', operator: 'eq', value: true },
+          { column: 'age', operator: 'gt', value: 30 }
+        ]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return at least one record');
+      result.data.forEach(record => {
+        assert.strictEqual(record.is_active, true, 'All records should be active');
+        assert.ok(Number(record.age) > 30, 'All records should have age greater than 30');
+      });
+    });
+    
+    it('should handle combination of filters, sorting and pagination', async () => {
+      await adapter.createRecord('test_schema_table', {
+        name: 'High Salary User',
+        email: 'high.salary@example.com',
+        age: 40,
+        salary: 90000,
+        is_active: true
+      });
+      
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'is_active', operator: 'eq', value: true }],
+        orderBy: [{ column: 'salary', direction: 'desc' }],
+        page: 1,
+        perPage: 2
+      });
+      
+      assert.strictEqual(result.data.length, 2, 'Should return exactly 2 records');
+      assert.strictEqual(result.page, 1, 'Should be on page 1');
+      assert.strictEqual(result.perPage, 2, 'Should have 2 records per page');
+      
+      result.data.forEach(record => {
+        assert.strictEqual(record.is_active, true, 'All records should be active');
+      });
+      
+      const salaries = result.data
+        .map(r => r.salary === null ? -1 : Number(r.salary))
+        .filter(salary => salary >= 0);
+      
+      if (salaries.length >= 2) {
+        for (let i = 0; i < salaries.length - 1; i++) {
+          assert.ok(salaries[i] >= salaries[i+1], 'Salaries should be in descending order');
+        }
+      }
+    });
+    
+    it('should prevent SQL injection via table name', async () => {
+      try {
+        await adapter.getTableData('test_schema_table; DROP TABLE test_schema_table; --', {});
+        assert.fail('Should throw an error for malicious table name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        
+        const tables = await adapter.getTableList();
+        assert.ok(tables.includes('test_schema_table'), 'Table should still exist after SQL injection attempt');
+      }
+    });
+    
+    it('should prevent SQL injection via column names in orderBy', async () => {
+      try {
+        await adapter.getTableData('test_schema_table', {
+          orderBy: [{ column: 'id; DROP TABLE test_schema_table; --', direction: 'asc' }]
+        });
+        assert.fail('Should throw an error for malicious column name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        
+        const tables = await adapter.getTableList();
+        assert.ok(tables.includes('test_schema_table'), 'Table should still exist after SQL injection attempt');
+      }
+    });
+    
+    it('should prevent SQL injection via filter columns', async () => {
+      try {
+        await adapter.getTableData('test_schema_table', {
+          filters: [{ 
+            column: 'name; DROP TABLE test_schema_table; --', 
+            operator: 'eq', 
+            value: 'John'
+          }]
+        });
+        assert.fail('Should throw an error for malicious filter column');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        
+        const tables = await adapter.getTableList();
+        assert.ok(tables.includes('test_schema_table'), 'Table should still exist after SQL injection attempt');
+      }
+    });
+    
+    it('should prevent SQL injection via filter values', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ 
+          column: 'name', 
+          operator: 'eq', 
+          value: "John' OR '1'='1"
+        }]
+      });
+      
+      assert.strictEqual(result.data.length, 0, 'SQL injection attempt should not return all records');
+      
+      const allRecords = await adapter.getTableData('test_schema_table', {});
+      assert.ok(allRecords.total > 0, 'Records should still exist in the table');
+    });
+    
+    it('should handle empty result sets properly', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'eq', value: 999 }]
+      });
+      
+      assert.strictEqual(result.data.length, 0, 'Should return no records');
+      assert.strictEqual(result.total, 0, 'Total should be 0');
+      assert.strictEqual(result.page, 1, 'Page should still be 1');
+      assert.strictEqual(result.totalPages, 0, 'Total pages should be 0');
+    });
+    
+    it('should handle filter on JSON data', async () => {
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const query = `
+        SELECT * FROM test_schema_table 
+        WHERE data->>'role' = 'admin'
+      `;
+      
+      const adminUsers = await db.any(query);
+      assert.ok(adminUsers.length >= 1, 'Should have at least one admin user');
+      
+      adminUsers.forEach(user => {
+        assert.strictEqual(user.data.role, 'admin', 'All users should have admin role');
+      });
+    });
+    
+    it('should handle filter on array data', async () => {
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const query = `
+        SELECT * FROM test_schema_table 
+        WHERE 'frontend' = ANY(tags)
+      `;
+      
+      const frontendUsers = await db.any(query);
+      assert.ok(frontendUsers.length >= 1, 'Should have at least one frontend user');
+      
+      frontendUsers.forEach(user => {
+        assert.ok(user.tags.includes('frontend'), 'All users should have frontend tag');
+      });
+    });
+  });
+
+  describe('getTableData edge cases', () => {
+    before(async () => {
+      await adapter.connect(testConfig);
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      await db.none(`DELETE FROM test_schema_table`);
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'Edge Case 1',
+        email: 'edge.case.1@example.com',
+        age: 25,
+        salary: 50000,
+        is_active: true,
+        data: { nested: { value: 42 } },
+        tags: ['tag1', 'TAG2', 'Tag3'],
+        created_at: new Date('2025-01-01T00:00:00Z')
+      });
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'Edge Case 2',
+        email: 'edge.case.2@example.com',
+        age: null,
+        salary: null,
+        is_active: false,
+        data: { nested: { value: null } },
+        tags: [],
+        created_at: new Date('2025-02-01T00:00:00Z')
+      });
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'Edge Quote Case',
+        email: 'special.chars@example.com',
+        age: 30,
+        salary: 60000,
+        is_active: true,
+        data: { nested: { value: "string with 'quotes'" } },
+        tags: ['special-char', 'another-one'],
+        created_at: new Date('2025-03-01T00:00:00Z')
+      });
+      
+      await adapter.createRecord('test_schema_table', {
+        name: 'Case Sensitivity Test',
+        email: 'UPPERCASE@example.com',
+        age: 40,
+        salary: 70000,
+        is_active: true,
+        data: { nested: { level2: { level3: { value: 100 } } } },
+        tags: ['TAG1', 'tag2'],
+        created_at: new Date('2025-04-01T00:00:00Z')
+      });
+      
+      for (let i = 1; i <= 20; i++) {
+        await adapter.createRecord('test_schema_table', {
+          name: `Pagination Test ${i}`,
+          email: `pagination.${i}@example.com`,
+          age: 20 + i,
+          salary: 40000 + (i * 1000),
+          is_active: i % 2 === 0,
+          data: { index: i },
+          tags: [`page${i}`, 'pagination'],
+          created_at: new Date(`2025-05-${i.toString().padStart(2, '0')}T00:00:00Z`)
+        });
+      }
+    });
+
+    it('should handle sorting with mixed null and non-null values correctly', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        orderBy: [{ column: 'salary', direction: 'desc' }],
+        page: 1,
+        perPage: 10
+      });
+      
+      const nonNullRecords = result.data.filter(r => r.salary !== null);
+      const nullRecords = result.data.filter(r => r.salary === null);
+      
+      if (nonNullRecords.length >= 2) {
+        for (let i = 0; i < nonNullRecords.length - 1; i++) {
+          const currentSalary = Number(nonNullRecords[i].salary);
+          const nextSalary = Number(nonNullRecords[i + 1].salary);
+          assert.ok(currentSalary >= nextSalary, 'Non-null salaries should be in descending order');
+        }
+      }
+      
+      if (nonNullRecords.length > 0 && nullRecords.length > 0) {
+        const lastNonNullIndex = result.data.indexOf(nonNullRecords[nonNullRecords.length - 1]);
+        const firstNullIndex = result.data.indexOf(nullRecords[0]);
+        assert.ok(lastNonNullIndex < firstNullIndex, 'Null values should appear after non-null values when sorting DESC');
+      }
+    });
+    
+    it('should handle filtering with empty arrays', async () => {
+      const emptyArrayRecord = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'email', operator: 'eq', value: 'edge.case.2@example.com' }]
+      });
+      
+      assert.strictEqual(emptyArrayRecord.data.length, 1, 'Should find the record with empty tags');
+      assert.ok(Array.isArray(emptyArrayRecord.data[0].tags), 'Tags should be an array');
+      assert.strictEqual(emptyArrayRecord.data[0].tags.length, 0, 'Tags should be empty');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const result = await db.any(`
+        SELECT * FROM test_schema_table
+        WHERE array_length(tags, 1) IS NULL OR array_length(tags, 1) = 0
+      `);
+      
+      assert.ok(result.length > 0, 'Should find records with empty arrays');
+      result.forEach(record => {
+        assert.ok(Array.isArray(record.tags) && record.tags.length === 0, 'Should only have records with empty tags');
+      });
+    });
+    
+    it('should handle case sensitivity in string filters correctly', async () => {
+      const result1 = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'email', operator: 'contains', value: 'UPPERCASE' }]
+      });
+      
+      assert.strictEqual(result1.data.length, 1, 'Should find the record with case-insensitive search');
+      assert.strictEqual(result1.data[0].email, 'UPPERCASE@example.com');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const ciResult = await db.any(`
+        SELECT * FROM test_schema_table
+        WHERE email ILIKE $1
+      `, ['%uppercase%']);
+      
+      assert.strictEqual(ciResult.length, 1, 'Case-insensitive search should find the record');
+      
+      const csResult = await db.any(`
+        SELECT * FROM test_schema_table
+        WHERE email LIKE $1
+      `, ['%UPPERCASE%']);
+      
+      assert.strictEqual(csResult.length, 1, 'Case-sensitive search should find the record');
+      
+      const csLowerResult = await db.any(`
+        SELECT * FROM test_schema_table
+        WHERE email LIKE $1
+      `, ['%uppercase%']);
+      
+      assert.strictEqual(csLowerResult.length, 0, 'Case-sensitive search with lowercase should not find the record');
+    });
+    
+    it('should handle special characters in filters correctly', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'email', operator: 'eq', value: 'special.chars@example.com' }]
+      });
+      
+      assert.strictEqual(result.data.length, 1, 'Should find the record with special characters');
+      assert.strictEqual(result.data[0].name, 'Edge Quote Case');
+    });
+    
+    it('should handle complex pagination with filters and sorting correctly', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [
+          { column: 'name', operator: 'contains', value: 'Pagination Test' },
+          { column: 'is_active', operator: 'eq', value: true }
+        ],
+        orderBy: [{ column: 'age', direction: 'desc' }],
+        page: 2,
+        perPage: 3
+      });
+      
+      assert.strictEqual(result.data.length, 3, 'Should return 3 records for page 2');
+      
+      const ages = result.data.map(r => Number(r.age));
+      
+      result.data.forEach(record => {
+        assert.strictEqual(record.is_active, true, 'All records should have is_active = true');
+        if (typeof record.name === 'string') {
+          assert.ok(record.name.includes('Pagination Test'), 'All records should be pagination tests');
+        }
+      });
+      
+      for (let i = 0; i < ages.length - 1; i++) {
+        assert.ok(ages[i] >= ages[i+1], 'Ages should be in descending order');
+      }
+    });
+    
+    it('should handle boolean filters correctly', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'is_active', operator: 'eq', value: false }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should find records with is_active = false');
+      result.data.forEach(record => {
+        assert.strictEqual(record.is_active, false, 'All records should have is_active = false');
+      });
+    });
+    
+    it('should handle date comparisons in filters correctly', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ 
+          column: 'created_at', 
+          operator: 'gt', 
+          value: new Date('2025-03-15T00:00:00Z')
+        }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should find records created after March 15, 2025');
+      result.data.forEach(record => {
+        if (record.created_at) {
+          const recordDate = new Date(record.created_at.toString());
+          const compareDate = new Date('2025-03-15T00:00:00Z');
+          assert.ok(recordDate > compareDate, 'Record date should be after compare date');
+        }
+      });
+    });
+    
+    it('should handle combined complex filters correctly', async () => {
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [
+          { column: 'age', operator: 'gt', value: 30 },
+          { column: 'is_active', operator: 'eq', value: true },
+          { column: 'salary', operator: 'lt', value: 70000 }
+        ]
+      });
+      
+      assert.ok(result.data.length >= 0, 'Should return records matching all conditions');
+      result.data.forEach(record => {
+        assert.ok(Number(record.age) > 30, 'Age should be greater than 30');
+        assert.strictEqual(record.is_active, true, 'is_active should be true');
+        assert.ok(Number(record.salary) < 70000, 'Salary should be less than 70000');
+      });
+    });
+    
+    it('should handle retrieving the last page of results correctly', async () => {
+      const countResult = await adapter.getTableData('test_schema_table', {
+        perPage: 5
+      });
+      
+      const totalPages = countResult.totalPages;
+      assert.ok(totalPages > 1, 'Should have multiple pages for this test');
+      
+      const result = await adapter.getTableData('test_schema_table', {
+        page: totalPages,
+        perPage: 5
+      });
+      
+      assert.strictEqual(result.page, totalPages, 'Should be on the last page');
+      assert.ok(result.data.length > 0, 'Last page should have at least one record');
+      assert.ok(result.data.length <= 5, 'Last page should have at most perPage records');
+    });
+    
+    it('should handle filtering with large NOT IN lists', async () => {
+      const unwantedAges = Array.from({ length: 50 }, (_, i) => i + 100);
+      
+      const result = await adapter.getTableData('test_schema_table', {
+        filters: [{ column: 'age', operator: 'nin', value: unwantedAges }]
+      });
+      
+      assert.ok(result.data.length > 0, 'Should return records with ages not in the list');
+      result.data.forEach(record => {
+        if (record.age !== null) {
+          assert.ok(!unwantedAges.includes(Number(record.age)), 'Age should not be in the unwanted list');
+        }
+      });
     });
   });
 });
