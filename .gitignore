@@ -137,3 +137,4 @@ dist
 .docker
 dist
 bin
+rules.md

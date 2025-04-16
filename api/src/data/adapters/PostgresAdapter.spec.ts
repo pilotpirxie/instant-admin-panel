@@ -159,7 +159,6 @@ describe('PostgresAdapter', () => {
     it('should return the correct schema for a table', async () => {
       await adapter.connect(testConfig);
       const schema = await adapter.getTableSchema('test_schema_table');
-      console.info('Schema:', JSON.stringify(schema, null, 2));
 
       assert.strictEqual(schema.name, 'test_schema_table', 'Table name should match');
       assert.ok(Array.isArray(schema.columns), 'Columns should be an array');
@@ -236,7 +235,6 @@ describe('PostgresAdapter', () => {
     it('should return the correct foreign key information', async () => {
       await adapter.connect(testConfig);
       const schema = await adapter.getTableSchema('test_schema_related_table');
-      console.info('Schema:', JSON.stringify(schema, null, 2));
 
       assert.ok(Array.isArray(schema.foreignKeys), 'Foreign keys should be an array');
       assert.strictEqual(schema.foreignKeys?.length, 1, 'Should have one foreign key');
@@ -315,8 +313,6 @@ describe('PostgresAdapter', () => {
       };
       
       const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
-      
-      console.info('Created record:', JSON.stringify(result, null, 2));
       
       const typedResult = result as TestRecordWithId;
       
@@ -609,6 +605,353 @@ describe('PostgresAdapter', () => {
       assert.strictEqual(typedResult.data, null, 'data should be null');
       assert.strictEqual(typedResult.tags, null, 'tags should be null');
       assert.strictEqual(typedResult.profile_picture, null, 'profile_picture should be null');
+    });
+  });
+
+  describe('deleteRecord', () => {
+    before(async () => {
+      await adapter.connect(testConfig);
+    });
+
+    it('should throw an error when not connected', async () => {
+      await adapter.disconnect();
+      try {
+        await adapter.deleteRecord('test_schema_table', { id: 1 });
+        assert.fail('Should have thrown an error');
+      } catch (error) {
+        assert.ok(error instanceof Error, 'Should throw an Error');
+        assert.strictEqual(error.message, 'Database not connected', 'Error message should match');
+      }
+    });
+
+    it('should throw an error when where condition is empty', async () => {
+      await adapter.connect(testConfig);
+      try {
+        await adapter.deleteRecord('test_schema_table', {});
+        assert.fail('Should have thrown an error');
+      } catch (error) {
+        assert.ok(error instanceof Error, 'Should throw an Error');
+        assert.strictEqual(error.message, 'Failed to delete record: Where conditions cannot be empty', 'Error message should match');
+      }
+    });
+
+    it('should return false when no record matches the where condition', async () => {
+      await adapter.connect(testConfig);
+      const result = await adapter.deleteRecord('test_schema_table', { id: 9999999 });
+      assert.strictEqual(result, false, 'Should return false when no record is deleted');
+    });
+
+    it('should successfully delete a record and return true', async () => {
+      await adapter.connect(testConfig);
+      
+      const testRecord = {
+        name: 'Delete Test User',
+        email: 'delete.test@example.com',
+        age: 25
+      };
+      
+      type RecordWithId = typeof testRecord & { id: number };
+      const createdRecord = await adapter.createRecord('test_schema_table', testRecord) as RecordWithId;
+      
+      assert.ok(createdRecord.id, 'Record should have been created with an ID');
+      
+      const deleteResult = await adapter.deleteRecord('test_schema_table', { id: createdRecord.id });
+      assert.strictEqual(deleteResult, true, 'Should return true when record is deleted');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const verifyQuery = `
+        SELECT * FROM test_schema_table WHERE id = $1
+      `;
+      const result = await db.oneOrNone(verifyQuery, [createdRecord.id]);
+      assert.strictEqual(result, null, 'Record should no longer exist in the database');
+    });
+
+    it('should delete a record using a non-primary key field', async () => {
+      await adapter.connect(testConfig);
+      
+      const uniqueEmail = `delete.by.email.${Date.now()}@example.com`;
+      const testRecord = {
+        name: 'Delete By Email Test',
+        email: uniqueEmail,
+        age: 30
+      };
+      
+      type RecordWithId = typeof testRecord & { id: number };
+      const createdRecord = await adapter.createRecord('test_schema_table', testRecord) as RecordWithId;
+      
+      assert.ok(createdRecord.id, 'Record should have been created with an ID');
+      
+      const deleteResult = await adapter.deleteRecord('test_schema_table', { email: uniqueEmail });
+      assert.strictEqual(deleteResult, true, 'Should return true when record is deleted by email');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const verifyQuery = `
+        SELECT * FROM test_schema_table WHERE email = $1
+      `;
+      const result = await db.oneOrNone(verifyQuery, [uniqueEmail]);
+      assert.strictEqual(result, null, 'Record should no longer exist in the database');
+    });
+
+    it('should delete records that match multiple conditions', async () => {
+      await adapter.connect(testConfig);
+      
+      const baseName = 'Multiple Conditions Test';
+      const email1 = `multi.condition.1.${Date.now()}@example.com`;
+      const email2 = `multi.condition.2.${Date.now()}@example.com`;
+      
+      await adapter.createRecord('test_schema_table', {
+        name: baseName,
+        email: email1,
+        age: 35
+      });
+      
+      await adapter.createRecord('test_schema_table', {
+        name: baseName,
+        email: email2,
+        age: 40
+      });
+      
+      const deleteResult = await adapter.deleteRecord('test_schema_table', { 
+        name: baseName,
+        age: 35
+      });
+      
+      assert.strictEqual(deleteResult, true, 'Should return true when record is deleted');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const verifyQuery1 = `
+        SELECT * FROM test_schema_table WHERE name = $1 AND email = $2
+      `;
+      const result1 = await db.oneOrNone(verifyQuery1, [baseName, email1]);
+      assert.strictEqual(result1, null, 'First record should no longer exist');
+      
+      const verifyQuery2 = `
+        SELECT * FROM test_schema_table WHERE name = $1 AND email = $2
+      `;
+      const result2 = await db.oneOrNone(verifyQuery2, [baseName, email2]);
+      assert.ok(result2, 'Second record should still exist');
+      assert.strictEqual(result2.age, 40, 'Second record should have the correct age');
+    });
+
+    it('should handle null values in where conditions correctly', async () => {
+      await adapter.connect(testConfig);
+      
+      const testRecord = {
+        name: 'Null Field Test',
+        email: `null.field.${Date.now()}@example.com`,
+        age: null
+      };
+      
+      type RecordWithId = typeof testRecord & { id: number };
+      const createdRecord = await adapter.createRecord('test_schema_table', testRecord) as RecordWithId;
+      
+      assert.ok(createdRecord.id, 'Record should have been created with an ID');
+      assert.strictEqual(createdRecord.age, null, 'Age should be null');
+      
+      const deleteResult = await adapter.deleteRecord('test_schema_table', { 
+        id: createdRecord.id,
+        age: null 
+      });
+      
+      assert.strictEqual(deleteResult, true, 'Should return true when record with null field is deleted');
+    });
+
+    it('should handle complex data types in where conditions', async () => {
+      await adapter.connect(testConfig);
+      
+      const testData = { key: 'value', nested: { flag: true } };
+      const testRecord = {
+        name: 'Complex Data Test',
+        email: `complex.data.${Date.now()}@example.com`,
+        data: testData
+      };
+      
+      type RecordWithId = typeof testRecord & { id: number };
+      const createdRecord = await adapter.createRecord('test_schema_table', testRecord) as RecordWithId;
+      
+      assert.ok(createdRecord.id, 'Record should have been created with an ID');
+      
+      const deleteResult = await adapter.deleteRecord('test_schema_table', { id: createdRecord.id });
+      assert.strictEqual(deleteResult, true, 'Should return true when record with complex data is deleted');
+    });
+
+    it('should delete a record even if a referenced record exists (ON DELETE CASCADE)', async () => {
+      await adapter.connect(testConfig);
+      
+      const parentRecord = {
+        name: 'Cascade Delete Parent',
+        email: `cascade.parent.${Date.now()}@example.com`
+      };
+      
+      type RecordWithId = typeof parentRecord & { id: number };
+      const createdParent = await adapter.createRecord('test_schema_table', parentRecord) as RecordWithId;
+      
+      assert.ok(createdParent.id, 'Parent record should have been created with an ID');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      await db.none(`
+        INSERT INTO test_schema_related_table (test_id, description)
+        VALUES ($1, $2)
+      `, [createdParent.id, 'Related record for cascade test']);
+      
+      const checkChildQuery = `
+        SELECT * FROM test_schema_related_table WHERE test_id = $1
+      `;
+      const childBefore = await db.oneOrNone(checkChildQuery, [createdParent.id]);
+      assert.ok(childBefore, 'Child record should exist before parent deletion');
+      
+      const deleteResult = await adapter.deleteRecord('test_schema_table', { id: createdParent.id });
+      assert.strictEqual(deleteResult, true, 'Should return true when parent record is deleted');
+      
+      const childAfter = await db.oneOrNone(checkChildQuery, [createdParent.id]);
+      assert.strictEqual(childAfter, null, 'Child record should be deleted due to CASCADE constraint');
+    });
+  });
+
+  describe('SQL Injection Prevention', () => {
+    before(async () => {
+      await adapter.connect(testConfig);
+    });
+
+    it('should prevent SQL injection in createRecord through field names', async () => {
+      try {
+        await adapter.createRecord('test_schema_table', {
+          'name": (SELECT 1); --': 'SQL Injection Test'
+        });
+        assert.fail('Should have thrown an error for invalid column name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        assert.ok(
+          error.message.includes('Failed to create record'),
+          'Error message should indicate creation failure'
+        );
+      }
+    });
+
+    it('should prevent SQL injection in createRecord through values', async () => {
+      const maliciousValue = "malicious.user+DELETE-FROM-test_schema_table@example.com";
+      
+      const result = await adapter.createRecord('test_schema_table', {
+        name: 'Safe Record',
+        email: maliciousValue
+      });
+      
+      assert.ok(result);
+      assert.strictEqual(result.email, maliciousValue, 'Malicious string should be stored as-is without executing');
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const count = await db.one('SELECT COUNT(*) FROM test_schema_table');
+      assert.ok(Number(count.count) > 0, 'Table should still contain records');
+    });
+
+    it('should prevent SQL injection in createRecord with JSON data containing malicious content', async () => {
+      const maliciousJson = { 
+        attack: "'); DROP TABLE test_schema_table; --",
+        nested: { 
+          malicious: "SELECT pg_sleep(1)--" 
+        }
+      };
+      
+      const result = await adapter.createRecord('test_schema_table', {
+        name: 'JSON Injection Test',
+        email: 'json.injection@test.com',
+        data: maliciousJson
+      });
+      
+      assert.ok(result);
+      assert.deepStrictEqual(result.data, maliciousJson, 'Malicious JSON should be stored as-is without executing');
+    });
+
+    it('should prevent SQL injection in deleteRecord through field names', async () => {
+      try {
+        await adapter.deleteRecord('test_schema_table', {
+          'id=1; DELETE FROM test_schema_table; --': 1
+        });
+        assert.fail('Should have thrown an error for invalid column name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        assert.ok(
+          error.message.includes('Failed to delete record'),
+          'Error message should indicate deletion failure'
+        );
+      }
+    });
+
+    it('should prevent SQL injection in deleteRecord through values', async () => {
+      await adapter.createRecord('test_schema_table', {
+        name: 'Safe Delete Test',
+        email: 'safe.delete@test.com'
+      });
+      
+      try {
+        await adapter.deleteRecord('test_schema_table', {
+          id: "1; DELETE FROM test_schema_table; --"
+        });
+
+        assert.fail('Should have thrown an error for invalid value');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        assert.ok(
+          error.message.includes('Failed to delete record'),
+          'Error message should indicate deletion failure'
+        );
+      }
+      
+      const db = adapter['db'];
+      if (!db) throw new Error('Database not connected');
+      
+      const checkRecord = await db.oneOrNone('SELECT * FROM test_schema_table WHERE email = $1', ['safe.delete@test.com']);
+      assert.ok(checkRecord, 'Safe record should still exist after attempted injection');
+    });
+
+    it('should prevent SQL injection through table name in createRecord', async () => {
+      try {
+        await adapter.createRecord('test_schema_table; DROP TABLE test_schema_table; --', {
+          name: 'Table Name Injection'
+        });
+        assert.fail('Should have thrown an error for invalid table name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+      }
+      
+      const tables = await adapter.getTableList();
+      assert.ok(tables.includes('test_schema_table'), 'Table should still exist after attempted injection');
+    });
+
+    it('should prevent SQL injection through table name in deleteRecord', async () => {
+      try {
+        await adapter.deleteRecord('test_schema_table; DROP TABLE test_schema_table; --', {
+          id: 1
+        });
+        assert.fail('Should have thrown an error for invalid table name');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+      }
+      
+      const tables = await adapter.getTableList();
+      assert.ok(tables.includes('test_schema_table'), 'Table should still exist after attempted injection');
+    });
+
+    it('should prevent UNION-based SQL injection attacks', async () => {
+      const unionAttack = "union.attack+SELECT-username-password-FROM-users@example.com";
+      
+      const result = await adapter.createRecord('test_schema_table', {
+        name: 'UNION Attack Test',
+        email: unionAttack
+      });
+      
+      assert.ok(result);
+      assert.strictEqual(result.email, unionAttack, 'UNION attack string should be stored as-is without executing');
     });
   });
 });

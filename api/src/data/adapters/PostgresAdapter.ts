@@ -14,7 +14,7 @@ import {
 } from '../DatabaseAdapter'; 
 
 export class PostgresAdapter implements DatabaseAdapter {
-  private db: pgPromise.IDatabase<any> | null = null;
+  private db: pgPromise.IDatabase<unknown> | null = null;
   private pgp: pgPromise.IMain;
   private config: DatabaseConfig | null = null;
 
@@ -297,7 +297,6 @@ export class PostgresAdapter implements DatabaseAdapter {
     if (!this.config) throw new Error('Database config not set');
 
     try {
-      // Filter out undefined values
       const filteredRecord: Partial<T> = {};
       for (const key in record) {
         if (record[key] !== undefined) {
@@ -305,7 +304,6 @@ export class PostgresAdapter implements DatabaseAdapter {
         }
       }
 
-      // Create column names and values array for the query
       const columns = Object.keys(filteredRecord);
       const values = Object.values(filteredRecord);
       
@@ -313,7 +311,6 @@ export class PostgresAdapter implements DatabaseAdapter {
         throw new Error('Record cannot be empty');
       }
 
-      // Create a parameterized query
       const columnNames = columns.join(', ');
       const valuePlaceholders = columns.map((_, i) => `$${i + 1}`).join(', ');
       
@@ -334,9 +331,53 @@ export class PostgresAdapter implements DatabaseAdapter {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async deleteRecord(tableName: string, where: Record<string, DatabaseValue>): Promise<boolean> {
-    return Promise.resolve(false);
+    if (!this.db) throw new Error('Database not connected');
+    if (!this.config) throw new Error('Database config not set');
+
+    try {
+      if (Object.keys(where).length === 0) {
+        throw new Error('Where conditions cannot be empty');
+      }
+
+      const schema = this.config.connection.schema;
+      
+      const whereColumns = Object.keys(where);
+      const whereValues: DatabaseValue[] = [];
+      const whereClauses: string[] = [];
+      
+      whereColumns.forEach(column => {
+        const value = where[column];
+        const safeColumnName = this.pgp.as.name(column);
+        
+        if (value === null) {
+          whereClauses.push(`${safeColumnName} IS NULL`);
+        } else {
+          whereValues.push(value);
+          whereClauses.push(`${safeColumnName} = $${whereValues.length}`);
+        }
+      });
+
+      const whereClause = whereClauses.join(' AND ');
+      
+      const safeSchemaName = this.pgp.as.name(schema);
+      const safeTableName = this.pgp.as.name(tableName);
+      
+      const query = `
+        DELETE FROM ${safeSchemaName}.${safeTableName}
+        WHERE ${whereClause}
+        RETURNING 1 AS deleted
+      `;
+
+      const result = await this.db.oneOrNone(query, whereValues);
+      return !!result;
+    } catch (error) {
+      let errorMessage = 'Failed to delete record';
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      throw new Error(errorMessage);
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
