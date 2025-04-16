@@ -108,7 +108,9 @@ export type DatabaseValue =
   | boolean 
   | Date 
   | null 
-  | undefined;
+  | undefined
+  | DatabaseValue[] 
+  | Record<string, any>;
 
 export type DatabaseAdapter = {
   connect: (connection: DatabaseConfig) => Promise<void>;

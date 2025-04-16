@@ -269,4 +269,346 @@ describe('PostgresAdapter', () => {
       assert.ok(ageConstraint);
     });
   });
+
+  describe('createRecord', () => {
+    before(async () => {
+      await adapter.connect(testConfig);
+    });
+
+    it('should throw an error when not connected', async () => {
+      await adapter.disconnect();
+      try {
+        await adapter.createRecord('test_schema_table', { name: 'Test User' });
+        assert.fail('Should have thrown an error');
+      } catch (error) {
+        assert.ok(error instanceof Error, 'Should throw an Error');
+        assert.strictEqual(error.message, 'Database not connected', 'Error message should match');
+      }
+    });
+
+    it('should throw an error when record is empty', async () => {
+      await adapter.connect(testConfig);
+      try {
+        await adapter.createRecord('test_schema_table', {});
+        assert.fail('Should have thrown an error');
+      } catch (error) {
+        assert.ok(error instanceof Error, 'Should throw an Error');
+        assert.strictEqual(error.message, 'Failed to create record: Record cannot be empty', 'Error message should match');
+      }
+    });
+
+    it('should create a record successfully', async () => {
+      await adapter.connect(testConfig);
+      
+      const testRecord = {
+        name: 'John Doe',
+        email: 'john.doe@example.com',
+        age: 30,
+        salary: 50000.50,
+        is_active: true,
+        data: { preferences: { theme: 'dark' } }
+      };
+      
+      type TestRecordWithId = typeof testRecord & {
+        id: number;
+        created_at: Date | string;
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      
+      console.info('Created record:', JSON.stringify(result, null, 2));
+      
+      const typedResult = result as TestRecordWithId;
+      
+      assert.ok(result, 'Should return the created record');
+      assert.strictEqual(result.name, testRecord.name, 'Name should match');
+      assert.strictEqual(result.email, testRecord.email, 'Email should match');
+      assert.strictEqual(result.age, testRecord.age, 'Age should match');
+      assert.strictEqual(Number(result.salary), testRecord.salary, 'Salary should match');
+      assert.strictEqual(result.is_active, testRecord.is_active, 'Is_active should match');
+      assert.deepStrictEqual(result.data, testRecord.data, 'Data should match');
+      assert.ok(typedResult.id, 'Should have an ID assigned');
+      assert.ok(typedResult.created_at, 'Should have created_at timestamp');
+    });
+
+    it('should filter out undefined values', async () => {
+      await adapter.connect(testConfig);
+      
+      const testRecord = {
+        name: 'Jane Smith',
+        email: 'jane.smith@example.com',
+        age: undefined,
+        salary: 65000.75,
+        is_active: undefined
+      };
+      
+      type TestRecordWithId = Omit<typeof testRecord, 'age' | 'is_active'> & {
+        id: number;
+        age: number | null;
+        is_active: boolean;
+        created_at: Date | string;
+        updated_at: Date | string | null;
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      
+      const typedResult = result as unknown as TestRecordWithId;
+      
+      assert.ok(result, 'Should return the created record');
+      assert.ok(typedResult.id, 'Should have an ID assigned');
+      assert.ok(typedResult.created_at, 'Created_at should have timestamp');
+      assert.strictEqual(typedResult.updated_at, null, 'Updated_at should be null');
+      assert.strictEqual(result.name, testRecord.name, 'Name should match');
+      assert.strictEqual(result.email, testRecord.email, 'Email should match');
+      assert.strictEqual(Number(result.salary), testRecord.salary, 'Salary should match');
+      
+      assert.strictEqual(typedResult.age, null, 'Age should be null');
+      assert.strictEqual(typedResult.is_active, true, 'Is_active should be default value (true)');
+    });
+
+    it('should handle array data types correctly', async () => {
+      await adapter.connect(testConfig);
+      
+      const testRecord = {
+        name: 'Array Test User',
+        email: 'array.test@example.com',
+        tags: ['tag1', 'tag2', 'tag3']
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      
+      assert.ok(result, 'Should return the created record');
+      assert.ok(Array.isArray(result.tags), 'Tags should be an array');
+      assert.deepStrictEqual(result.tags, testRecord.tags, 'Tags array should match');
+    });
+
+    it('should throw an error when trying to violate constraints', async () => {
+      await adapter.connect(testConfig);
+      
+      const record1 = await adapter.createRecord('test_schema_table', {
+        name: 'Unique Test',
+        email: 'unique.test@example.com'
+      });;
+      
+      assert.ok(record1, 'First record should be created successfully');
+      
+      try {
+        await adapter.createRecord('test_schema_table', {
+          name: 'Duplicate Email',
+          email: 'unique.test@example.com'
+        });
+        assert.fail('Should have thrown a unique constraint error');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.includes('Failed to create record'), 'Error message should indicate creation failure');
+        assert.ok(
+          error.message.includes('unique') || 
+          error.message.includes('duplicate') || 
+          error.message.includes('violates'),
+          'Error should mention constraint violation'
+        );
+      }
+    });
+
+    it('should respect check constraints', async () => {
+      await adapter.connect(testConfig);
+      
+      try {
+        await adapter.createRecord('test_schema_table', {
+          name: 'Negative Age',
+          email: 'negative.age@example.com',
+          age: -5
+        });
+        assert.fail('Should have thrown a check constraint error');
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.includes('Failed to create record'), 'Error message should indicate creation failure');
+        assert.ok(
+          error.message.includes('check constraint') || 
+          error.message.includes('violates') ||
+          error.message.includes('check'),
+          'Error should mention check constraint violation'
+        );
+      }
+    });
+
+    it('should create a record with null values explicitly set', async () => {
+      await adapter.connect(testConfig);
+      
+      const testRecord = {
+        name: 'Null Fields Test',
+        email: 'null.test@example.com',
+        age: null,
+        salary: null,
+        data: null,
+        tags: null
+      };
+      
+      type TestRecordWithId = typeof testRecord & {
+        id: number;
+        is_active: boolean;
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      const typedResult = result as unknown as TestRecordWithId;
+      
+      assert.ok(typedResult.id, 'Should have an ID assigned');
+      assert.strictEqual(result.name, testRecord.name, 'Name should match');
+      assert.strictEqual(result.email, testRecord.email, 'Email should match');
+      assert.strictEqual(result.age, null, 'Age should be null');
+      assert.strictEqual(result.salary, null, 'Salary should be null');
+      assert.strictEqual(result.data, null, 'Data should be null');
+      assert.strictEqual(result.tags, null, 'Tags should be null');
+      assert.strictEqual(typedResult.is_active, true, 'is_active should have default value');
+    });
+
+    it('should create a record with a numeric string that converts to a number', async () => {
+      await adapter.connect(testConfig);
+      const testRecord = {
+        name: 'Numeric String Test',
+        email: 'numeric.string@example.com',
+        salary: '75000.25',
+        age: '42'
+      };
+      
+      type TestRecordWithId = Omit<typeof testRecord, 'salary' | 'age'> & {
+        id: number;
+        salary: string | number;
+        age: string | number;
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      const typedResult = result as unknown as TestRecordWithId;
+      
+      assert.ok(typedResult.id, 'Should have an ID assigned');
+      assert.strictEqual(result.name, testRecord.name, 'Name should match');
+      assert.strictEqual(result.email, testRecord.email, 'Email should match');
+      assert.ok(typeof typedResult.salary === 'string' || typeof typedResult.salary === 'number', 
+        'Salary should be stored as string or number');
+      assert.strictEqual(Number(typedResult.salary), 75000.25, 'Salary converted to number should match');
+      assert.ok(typeof typedResult.age === 'string' || typeof typedResult.age === 'number', 
+        'Age should be stored as string or number');
+      assert.strictEqual(Number(typedResult.age), 42, 'Age converted to number should match');
+    });
+
+    it('should create a record with a complex JSON object', async () => {
+      await adapter.connect(testConfig);
+      const testRecord = {
+        name: 'Complex JSON Test',
+        email: 'json.complex@example.com',
+        data: {
+          address: {
+            street: '123 Main St',
+            city: 'Tech City',
+            zipCode: 12345,
+            coordinates: [40.7128, -74.0060]
+          },
+          preferences: {
+            notifications: {
+              email: true,
+              push: false,
+              sms: true
+            },
+            theme: 'dark',
+            fontSize: 14,
+            features: ['dashboard', 'reports', 'analytics']
+          },
+          metadata: {
+            lastLogin: '2025-04-16T12:00:00Z',
+            deviceInfo: {
+              browser: 'Chrome',
+              version: '112.0.5615.121',
+              platform: 'MacOS'
+            }
+          }
+        }
+      };
+      
+      type TestRecordWithId = typeof testRecord & {
+        id: number;
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      const typedResult = result as unknown as TestRecordWithId;
+      
+      assert.ok(typedResult.id, 'Should have an ID assigned');
+      assert.strictEqual(result.name, testRecord.name, 'Name should match');
+      assert.strictEqual(result.email, testRecord.email, 'Email should match');
+      assert.deepStrictEqual(result.data, testRecord.data, 'Complex JSON data should match');
+      assert.strictEqual(result.data.address.street, '123 Main St', 'Nested street property should match');
+      assert.strictEqual(result.data.preferences.notifications.email, true, 'Deeply nested boolean should match');
+      assert.strictEqual(result.data.preferences.features.length, 3, 'Array in JSON should have correct length');
+      assert.strictEqual(result.data.metadata.deviceInfo.browser, 'Chrome', 'Deeply nested string should match');
+    });
+
+    it('should create a record with an array containing mixed data types', async () => {
+      await adapter.connect(testConfig);
+      const testRecord = {
+        name: 'Mixed Array Test',
+        email: 'mixed.array@example.com',
+        data: {
+          mixedArray: [
+            'string value',
+            42,
+            true,
+            { nestedObject: 'value' },
+            ['nested', 'array']
+          ]
+        }
+      };
+      
+      type TestRecordWithId = typeof testRecord & {
+        id: number;
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      const typedResult = result as unknown as TestRecordWithId;
+      
+      assert.ok(typedResult.id, 'Should have an ID assigned');
+      assert.strictEqual(result.name, testRecord.name, 'Name should match');
+      assert.strictEqual(result.email, testRecord.email, 'Email should match');
+      assert.ok(Array.isArray(result.data.mixedArray), 'Should store array in JSON');
+      assert.strictEqual(result.data.mixedArray.length, 5, 'Array should have correct length');
+      assert.strictEqual(result.data.mixedArray[0], 'string value', 'String element should match');
+      assert.strictEqual(result.data.mixedArray[1], 42, 'Number element should match');
+      assert.strictEqual(result.data.mixedArray[2], true, 'Boolean element should match');
+      assert.deepStrictEqual(result.data.mixedArray[3], { nestedObject: 'value' }, 'Object element should match');
+      assert.deepStrictEqual(result.data.mixedArray[4], ['nested', 'array'], 'Nested array should match');
+    });
+
+    it('should create a record with minimal required fields', async () => {
+      await adapter.connect(testConfig);
+      const testRecord = {
+        name: 'Minimal Fields Test'
+      };
+      
+      type TestRecordWithId = typeof testRecord & {
+        id: number;
+        email: string | null;
+        age: number | null;
+        salary: number | null;
+        is_active: boolean;
+        created_at: Date | string;
+        updated_at: Date | string | null;
+        data: Record<string, any> | null;
+        tags: string[] | null;
+        profile_picture: Buffer | null;
+      };
+      
+      const result = await adapter.createRecord<typeof testRecord>('test_schema_table', testRecord);
+      const typedResult = result as unknown as TestRecordWithId;
+      
+      assert.ok(typedResult.id, 'Should have an ID assigned');
+      assert.strictEqual(result.name, testRecord.name, 'Name should match');
+      assert.strictEqual(typedResult.email, null, 'Email should be null');
+      assert.strictEqual(typedResult.age, null, 'Age should be null');
+      assert.strictEqual(typedResult.salary, null, 'Salary should be null');
+      assert.strictEqual(typedResult.is_active, true, 'is_active should have default value');
+      assert.ok(typedResult.created_at, 'created_at should have timestamp');
+      assert.strictEqual(typedResult.updated_at, null, 'updated_at should be null');
+      assert.strictEqual(typedResult.data, null, 'data should be null');
+      assert.strictEqual(typedResult.tags, null, 'tags should be null');
+      assert.strictEqual(typedResult.profile_picture, null, 'profile_picture should be null');
+    });
+  });
 });

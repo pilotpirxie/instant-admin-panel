@@ -65,14 +65,15 @@ export class PostgresAdapter implements DatabaseAdapter {
   async getTableList(): Promise<string[]> {
     if (!this.db) throw new Error('Database not connected');
     if (!this.config) throw new Error('Database config not set');
+    
     const query = `
       SELECT table_name 
       FROM information_schema.tables 
-      WHERE table_schema = '${this.config.connection.schema}'
+      WHERE table_schema = $1
       AND table_type = 'BASE TABLE'
     `;
     
-    const tables = await this.db.any(query);
+    const tables = await this.db.any(query, [this.config.connection.schema]);
     return tables.map(t => t.table_name);
   }
 
@@ -93,13 +94,13 @@ export class PostgresAdapter implements DatabaseAdapter {
       FROM 
         information_schema.columns
       WHERE 
-        table_schema = '${this.config.connection.schema}'
-        AND table_name = '${tableName}'
+        table_schema = $1
+        AND table_name = $2
       ORDER BY 
         ordinal_position
     `;
 
-    const columns = await this.db.any(columnsQuery);
+    const columns = await this.db.any(columnsQuery, [this.config.connection.schema, tableName]);
 
     const primaryKeyQuery = `
       SELECT 
@@ -111,11 +112,11 @@ export class PostgresAdapter implements DatabaseAdapter {
           AND tc.table_schema = kcu.table_schema
       WHERE 
         tc.constraint_type = 'PRIMARY KEY'
-        AND tc.table_schema = '${this.config.connection.schema}'
-        AND tc.table_name = '${tableName}'
+        AND tc.table_schema = $1
+        AND tc.table_name = $2
     `;
 
-    const primaryKeys = await this.db.any(primaryKeyQuery);
+    const primaryKeys = await this.db.any(primaryKeyQuery, [this.config.connection.schema, tableName]);
     const primaryKeyColumns = primaryKeys.map(pk => pk.column_name);
 
     const foreignKeyQuery = `
@@ -138,19 +139,19 @@ export class PostgresAdapter implements DatabaseAdapter {
           AND ccu.table_schema = tc.table_schema
       WHERE
         tc.constraint_type = 'FOREIGN KEY'
-        AND tc.table_schema = '${this.config.connection.schema}'
-        AND tc.table_name = '${tableName}'
+        AND tc.table_schema = $1
+        AND tc.table_name = $2
     `;
 
-    const foreignKeys = await this.db.any(foreignKeyQuery);
+    const foreignKeys = await this.db.any(foreignKeyQuery, [this.config.connection.schema, tableName]);
 
     const constraintQuery = `
       WITH table_oid AS (
         SELECT c.oid
         FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = '${this.config.connection.schema}'
-        AND c.relname = '${tableName}'
+        WHERE n.nspname = $1
+        AND c.relname = $2
       )
       SELECT
         tc.constraint_name,
@@ -170,12 +171,12 @@ export class PostgresAdapter implements DatabaseAdapter {
           ON pgc.conname = tc.constraint_name
           AND pgc.conrelid = (SELECT oid FROM table_oid)
       WHERE
-        tc.table_schema = '${this.config.connection.schema}'
-        AND tc.table_name = '${tableName}'
+        tc.table_schema = $1
+        AND tc.table_name = $2
         AND tc.constraint_type IN ('UNIQUE', 'CHECK')
     `;
 
-    const constraints = await this.db.any(constraintQuery);
+    const constraints = await this.db.any(constraintQuery, [this.config.connection.schema, tableName]);
 
     const mapPostgresTypeToUnifiedType = (dataType: string, udtName: string): UnifiedColumnType => {
       switch (udtName) {
@@ -290,9 +291,47 @@ export class PostgresAdapter implements DatabaseAdapter {
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async createRecord<T>(tableName: string, record: T): Promise<T> {
-    return Promise.resolve(undefined as unknown as T);
+   
+  async createRecord<T extends Record<string, DatabaseValue>>(tableName: string, record: T): Promise<T> {
+    if (!this.db) throw new Error('Database not connected');
+    if (!this.config) throw new Error('Database config not set');
+
+    try {
+      // Filter out undefined values
+      const filteredRecord: Partial<T> = {};
+      for (const key in record) {
+        if (record[key] !== undefined) {
+          filteredRecord[key] = record[key];
+        }
+      }
+
+      // Create column names and values array for the query
+      const columns = Object.keys(filteredRecord);
+      const values = Object.values(filteredRecord);
+      
+      if (columns.length === 0) {
+        throw new Error('Record cannot be empty');
+      }
+
+      // Create a parameterized query
+      const columnNames = columns.join(', ');
+      const valuePlaceholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+      
+      const query = `
+        INSERT INTO "${this.config.connection.schema}"."${tableName}" 
+        (${columnNames}) 
+        VALUES (${valuePlaceholders})
+        RETURNING *`;
+
+      const result = await this.db.one(query, values);
+      return result as T;
+    } catch (error) {
+      let errorMessage = 'Failed to create record';
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      throw new Error(errorMessage);
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

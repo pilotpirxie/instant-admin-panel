@@ -39,7 +39,7 @@ const exampleConfig: Config = {
   },
 };
 
-const configContent = JSON.stringify(exampleConfig);
+const configContent = JSON.stringify(exampleConfig, null, 2);
 fs.writeFileSync("config.json", configContent);
 
 runWithConfigFile(exampleConfig);
